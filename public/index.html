@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sky Hopper Online</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#111827;color:white;font-family:Arial;text-align:center}
+h1{margin:14px 0 8px}
+#menu{padding:10px}
+button,input,select{font-size:16px;padding:10px;margin:5px;border-radius:8px;border:0}
+button{background:#22c55e;color:white;font-weight:bold}
+input{width:120px}
+.hidden{display:none}
+#game{position:relative;margin:auto;width:min(96vw,500px)}
+canvas{width:100%;background:#70c5ce;border:3px solid white;border-radius:10px;display:block}
+#score{font-size:28px;font-weight:bold;margin:8px}
+#info{font-size:16px;margin:5px}
+</style>
+</head>
+
+<body>
+
+<h1>🐦 Sky Hopper</h1>
+
+<div id="menu">
+  <div>
+    <button onclick="single()">Single Player</button>
+    <button onclick="online()">Online Multiplayer</button>
+  </div>
+
+  <div>
+    <label>Bird:</label>
+    <select id="bird">
+      <option value="#facc15">Yellow</option>
+      <option value="#ef4444">Red</option>
+      <option value="#60a5fa">Blue</option>
+      <option value="#a855f7">Purple</option>
+      <option value="#22c55e">Green</option>
+    </select>
+
+    <label>Difficulty:</label>
+    <select id="difficulty">
+      <option value="2">Low</option>
+      <option value="3">Mid</option>
+      <option value="4">High</option>
+    </select>
+  </div>
+
+  <div id="onlineBox" class="hidden">
+    <button onclick="createRoom()">Create Room</button>
+    <br>
+    <input id="roomInput" placeholder="Room code">
+    <button onclick="joinRoom()">Join Room</button>
+    <div id="roomText"></div>
+  </div>
+</div>
+
+<div id="game" class="hidden">
+  <div id="score">0</div>
+  <div id="info"></div>
+  <canvas id="canvas" width="400" height="600"></canvas>
+  <button onclick="restart()">Restart</button>
+  <button onclick="backMenu()">Menu</button>
+</div>
+
+<script>
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+const menu=document.getElementById("menu");
+const game=document.getElementById("game");
+const scoreEl=document.getElementById("score");
+const info=document.getElementById("info");
+const onlineBox=document.getElementById("onlineBox");
+
+let bird={x:80,y:280,vy:0};
+let pipes=[];
+let score=0;
+let running=false;
+let mode="single";
+let speed=3;
+let ws=null;
+let opponentScore=0;
+let opponentOver=false;
+
+function single(){
+  mode="single";
+  onlineBox.classList.add("hidden");
+  startGame();
+}
+
+function online(){
+  mode="online";
+  onlineBox.classList.remove("hidden");
+  info.textContent="Create a room or join a friend's room.";
+}
+
+function createRoom(){
+  connect();
+  setTimeout(()=>{
+    if(ws) ws.send(JSON.stringify({type:"create"}));
+  },300);
+}
+
+function joinRoom(){
+  const c=document.getElementById("roomInput").value.trim().toUpperCase();
+  if(c.length!==4){alert("Enter a 4-letter room code.");return}
+  connect();
+  setTimeout(()=>{
+    if(ws) ws.send(JSON.stringify({type:"join",code:c}));
+  },300);
+}
+
+function connect(){
+  if(ws && ws.readyState===1)return;
+
+  const protocol=location.protocol==="https:"?"wss":"ws";
+  ws=new WebSocket(protocol+"://"+location.host);
+
+  ws.onopen=()=>{
+    info.textContent="Connected!";
+  };
+
+  ws.onmessage=e=>{
+    const m=JSON.parse(e.data);
+
+    if(m.type==="room"){
+      document.getElementById("roomText").textContent=
+        "Your room code: "+m.code+" — send it to your friend.";
+    }
+
+    if(m.type==="ready"){
+      document.getElementById("roomText").textContent=
+        "Room: "+m.code+" | Player "+m.player+" | Both connected!";
+      startGame();
+    }
+
+    if(m.type==="opponentScore"){
+      opponentScore=m.score;
+      updateInfo();
+    }
+
+    if(m.type==="opponentOver"){
+      opponentScore=m.score;
+      opponentOver=true;
+      updateInfo();
+    }
+
+    if(m.type==="opponentLeft"){
+      info.textContent="Opponent left the game.";
+    }
+
+    if(m.type==="error"){
+      alert(m.message);
+    }
+  };
+
+  ws.onclose=()=>{
+    if(mode==="online") info.textContent="Connection closed.";
+  };
+}
+
+function updateInfo(){
+  if(mode==="online"){
+    info.textContent="Your score: "+score+" | Opponent: "+opponentScore;
+  }
+}
+
+function startGame(){
+  menu.classList.add("hidden");
+  game.classList.remove("hidden");
+
+  speed=Number(document.getElementById("difficulty").value);
+  bird={
+    x:80,
+    y:280,
+    vy:0
+  };
+
+  pipes=[];
+  score=0;
+  opponentScore=0;
+  opponentOver=false;
+  running=true;
+
+  scoreEl.textContent="0";
+  info.textContent=mode==="online"?"Waiting for the best score!":"Tap / click / press SPACE";
+  
+  pipes.push(makePipe(400));
+  requestAnimationFrame(loop);
+}
+
+function makePipe(x){
+  const gap=150;
+  const top=80+Math.random()*260;
+  return {x:x,top:top,gap:gap,passed:false};
+}
+
+function flap(){
+  if(!running)return;
+  bird.vy=-7;
+}
+
+document.addEventListener("keydown",e=>{
+  if(e.code==="Space"){
+    e.preventDefault();
+    flap();
+  }
+});
+
+canvas.addEventListener("click",flap);
+canvas.addEventListener("touchstart",e=>{
+  e.preventDefault();
+  flap();
+},{passive:false});
+
+function loop(){
+  if(!running){
+    draw();
+    return;
+  }
+
+  bird.vy+=0.4;
+  bird.y+=bird.vy;
+
+  if(pipes[pipes.length-1].x<250){
+    pipes.push(makePipe(430));
+  }
+
+  for(let p of pipes){
+    p.x-=speed;
+
+    if(!p.passed && p.x+55<bird.x){
+      p.passed=true;
+      score++;
+      scoreEl.textContent=score;
+
+      if(ws && ws.readyState===1){
+        ws.send(JSON.stringify({type:"score",score:score}));
+      }
+    }
+  }
+
+  pipes=pipes.filter(p=>p.x>-70);
+
+  for(let p of pipes){
+    if(
+      bird.x+28>p.x &&
+      bird.x<p.x+55 &&
+      (bird.y< p.top || bird.y+28>p.top+p.gap)
+    ){
+      gameOver();
+    }
+  }
+
+  if(bird.y<0 || bird.y+28>canvas.height){
+    gameOver();
+  }
+
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // sky
+  ctx.fillStyle="#70c5ce";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // clouds
+  ctx.fillStyle="rgba(255,255,255,.8)";
+  ctx.beginPath();
+  ctx.arc(80,80,25,0,Math.PI*2);
+  ctx.arc(110,80,35,0,Math.PI*2);
+  ctx.arc(145,85,25,0,Math.PI*2);
+  ctx.fill();
+
+  // pipes
+  for(let p of pipes){
+    ctx.fillStyle="#22c55e";
+    ctx.fillRect(p.x,0,55,p.top);
+    ctx.fillRect(p.x,p.top+p.gap,55,canvas.height);
+
+    ctx.fillStyle="#16a34a";
+    ctx.fillRect(p.x-5,p.top-18,65,18);
+    ctx.fillRect(p.x-5,p.top+p.gap,65,18);
+  }
+
+  // bird
+  ctx.fillStyle=document.getElementById("bird").value;
+  ctx.beginPath();
+  ctx.arc(bird.x+14,bird.y+14,14,0,Math.PI*2);
+  ctx.fill();
+
+  // eye
+  ctx.fillStyle="white";
+  ctx.beginPath();
+  ctx.arc(bird.x+20,bird.y+9,5,0,Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle="black";
+  ctx.beginPath();
+  ctx.arc(bird.x+21,bird.y+9,2,0,Math.PI*2);
+  ctx.fill();
+
+  // beak
+  ctx.fillStyle="#f97316";
+  ctx.beginPath();
+  ctx.moveTo(bird.x+27,bird.y+14);
+  ctx.lineTo(bird.x+40,bird.y+18);
+  ctx.lineTo(bird.x+27,bird.y+22);
+  ctx.fill();
+}
+
+function gameOver(){
+  if(!running)return;
+  running=false;
+
+  if(ws && ws.readyState===1){
+    ws.send(JSON.stringify({type:"gameover",score:score}));
+  }
+
+  if(mode==="online"){
+    setTimeout(()=>{
+      let result="";
+
+      if(opponentOver){
+        if(score>opponentScore) result="🏆 YOU WIN!";
+        else if(score<opponentScore) result="😅 OPPONENT WINS!";
+        else result="🤝 DRAW!";
+      }else{
+        result="💥 Game Over — waiting for opponent...";
+      }
+
+      info.textContent=result+" Your score: "+score+
+        " | Opponent: "+opponentScore;
+  },100);
+  }else{
+    info.textContent="💥 Game Over! Score: "+score;
+  }
+}
+
+function restart(){
+  startGame();
+}
+
+function backMenu(){
+  running=false;
+  game.classList.add("hidden");
+  menu.classList.remove("hidden");
+}
+</script>
+
+</body>
+</html>
